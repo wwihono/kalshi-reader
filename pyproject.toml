@@ -1,0 +1,10 @@
+[project]
+name = "kalshi-nba-analysis"
+version = "0.1.0"
+description = "Predicting NBA games and evaluating Kalshi market odds"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
