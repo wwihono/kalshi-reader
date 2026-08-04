@@ -45,6 +45,11 @@ Tests cover the helpers called out in the work plan:
 - midpoint probability calculation
 - chronological 60/20/20 splitting
 - rolling feature construction (shifted windows / rest)
+- event-ticker parsing and market tidying (dates, teams, LA disambiguation)
+- tip-off time parsing (Eastern time, DST)
+- pregame candle selection (both live/historical candle schemas)
+- EDA summaries (missingness, seven-number, categorical) and the
+  Kalshi-to-results merge
 
 ```bash
 pytest
@@ -65,7 +70,23 @@ Download helpers:
 
 ```bash
 python scripts/collect_data.py --out-dir data/raw
+# then pull final pregame prices (one candlestick request per game):
+python scripts/collect_candles.py --raw-dir data/raw
 ```
+
+## EDA (Part 2)
+
+The EDA report is [`reports/eda.pdf`](reports/eda.pdf). Reproduce every
+number and figure in it with:
+
+```bash
+python scripts/run_eda.py
+```
+
+This writes `reports/eda_summary.txt` (dataset sizes, missingness,
+seven-number summaries, categorical counts, calibration preview),
+`reports/figures/*.png`, and the processed tables
+`data/processed/kalshi_events.csv` / `data/processed/merged_games.csv`.
 
 ## Method sketch
 
@@ -75,28 +96,6 @@ python scripts/collect_data.py --out-dir data/raw
 4. Chronological split: 60% train / 20% validation / 20% test. Tune on validation; evaluate once on test against Kalshi.
 5. Calibration bins, conditioned Brier/accuracy, and thresholded simulated trades (no real money).
 
-## Exploratory Data Analysis (Part 2)
-
-After downloading raw data, run:
-
-```bash
-python scripts/collect_data.py --out-dir data/raw
-python scripts/run_eda.py
-```
-
-This writes:
-
-- `data/processed/eda_summary.json` — shapes, missingness, summaries
-- `reports/figures/*.png` — EDA plots
-- `reports/eda.pdf` — Gradescope report (also requires public GitHub link)
-
-EDA modules live under `src/kalshi_nba/eda/` (summaries, join QA, plots). Parsing helpers for Kalshi titles/tickers are in `src/kalshi_nba/clean/kalshi_parse.py`. Tests cover fixtures in `data/fixtures/`.
-
-```bash
-pytest
-flake8 src scripts tests
-```
-
 ## Status
 
-EDA deliverable is in place: raw collectors, Kalshi/BR cleaning + join, summary/plot pipeline, `reports/eda.pdf`, and unit tests. Next steps are bulk pregame candlestick probabilities, full model training, conditioned accuracy, and simulated-return analysis.
+EDA deliverable is in place: raw collectors (markets, schedule, pregame candlesticks), Kalshi/BR cleaning + join, summary/plot pipeline, `reports/eda.pdf`, and a passing unit-test suite. Next steps are full model training, conditioned accuracy, and simulated-return analysis.

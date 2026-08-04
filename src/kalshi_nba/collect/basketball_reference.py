@@ -35,9 +35,10 @@ def _month_links(html: str, base_url: str = SEASON_SCHEDULE_URL) -> list[str]:
         else:
             # Monthly pages are under /leagues/...
             links.append(urljoin(base_url, href))
-    # Always include the landing page itself (often October / first month)
-    if base_url not in links:
-        links.insert(0, base_url)
+    # The landing page duplicates the first month's table, so only fall
+    # back to it when no month links were found at all.
+    if not links:
+        links.append(base_url)
     # Deduplicate while preserving order
     seen: set[str] = set()
     ordered: list[str] = []
@@ -89,6 +90,7 @@ def clean_schedule_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Normalize common Basketball Reference schedule columns."""
     rename = {
         "Date": "game_date",
+        "Start (ET)": "start_et",
         "Visitor/Neutral": "visitor_team",
         "Home/Neutral": "home_team",
         "PTS": "visitor_pts",
@@ -112,6 +114,7 @@ def clean_schedule_frame(frame: pd.DataFrame) -> pd.DataFrame:
         c
         for c in (
             "game_date",
+            "start_et",
             "visitor_team",
             "home_team",
             "visitor_pts",
@@ -120,7 +123,9 @@ def clean_schedule_frame(frame: pd.DataFrame) -> pd.DataFrame:
         )
         if c in out.columns
     ]
-    return out[keep].reset_index(drop=True)
+    # NBA teams play at most once per day, so identical rows are always
+    # scrape artifacts (e.g. a month table parsed twice).
+    return out[keep].drop_duplicates().reset_index(drop=True)
 
 
 def concat_monthly_tables(tables: Iterable[pd.DataFrame]) -> pd.DataFrame:
