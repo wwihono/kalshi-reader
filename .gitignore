@@ -42,6 +42,7 @@ data/processed/**
 
 # Keep tracked sample fixtures if added later
 !data/fixtures/**
+!data/fixtures/**/*
 
 # Logs / local outputs
 *.log
@@ -49,4 +50,7 @@ outputs/
 figures/
 reports/*.html
 reports/*.pdf
+!reports/eda.pdf
+!reports/figures/
+!reports/figures/**/*
 !reports/.gitkeep

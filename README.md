@@ -75,6 +75,28 @@ python scripts/collect_data.py --out-dir data/raw
 4. Chronological split: 60% train / 20% validation / 20% test. Tune on validation; evaluate once on test against Kalshi.
 5. Calibration bins, conditioned Brier/accuracy, and thresholded simulated trades (no real money).
 
+## Exploratory Data Analysis (Part 2)
+
+After downloading raw data, run:
+
+```bash
+python scripts/collect_data.py --out-dir data/raw
+python scripts/run_eda.py
+```
+
+This writes:
+
+- `data/processed/eda_summary.json` — shapes, missingness, summaries
+- `reports/figures/*.png` — EDA plots
+- `reports/eda.pdf` — Gradescope report (also requires public GitHub link)
+
+EDA modules live under `src/kalshi_nba/eda/` (summaries, join QA, plots). Parsing helpers for Kalshi titles/tickers are in `src/kalshi_nba/clean/kalshi_parse.py`. Tests cover fixtures in `data/fixtures/`.
+
+```bash
+pytest
+flake8 src scripts tests
+```
+
 ## Status
 
-Scaffold is **test-ready**: package layout, dependencies, collectors/cleaners/feature/model stubs with working core utilities, and a passing unit-test suite. Next steps are live data pulls, merge QA, full model runs, and report figures.
+EDA deliverable is in place: raw collectors, Kalshi/BR cleaning + join, summary/plot pipeline, `reports/eda.pdf`, and unit tests. Next steps are bulk pregame candlestick probabilities, full model training, conditioned accuracy, and simulated-return analysis.
