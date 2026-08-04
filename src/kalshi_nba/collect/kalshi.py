@@ -105,21 +105,51 @@ def fetch_candlesticks(
     start_ts: int | None = None,
     end_ts: int | None = None,
     period_interval: int = 1,
+    series_ticker: str = SERIES_TICKER,
+    historical: bool | None = None,
     session: requests.Session | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch one-minute (default) candlesticks for a market ticker."""
-    url = f"{BASE_URL}/markets/{ticker}/candlesticks"
+    """Fetch candlesticks for a market ticker.
+
+    Live/recent markets use ``/series/{series}/markets/{ticker}/candlesticks``.
+    Archived markets use ``/historical/markets/{ticker}/candlesticks``. When
+    ``historical`` is None, try live first and fall back to historical on 404.
+    """
     params: dict[str, Any] = {"period_interval": period_interval}
     if start_ts is not None:
         params["start_ts"] = start_ts
     if end_ts is not None:
         params["end_ts"] = end_ts
 
-    payload = _get_json(url, params=params, session=session)
-    candles = payload.get("candlesticks", [])
-    if not isinstance(candles, list):
-        raise ValueError("Expected list under 'candlesticks'")
-    return [c for c in candles if isinstance(c, dict)]
+    live_url = f"{BASE_URL}/series/{series_ticker}/markets/{ticker}/candlesticks"
+    hist_url = f"{BASE_URL}/historical/markets/{ticker}/candlesticks"
+
+    urls: list[str]
+    if historical is True:
+        urls = [hist_url]
+    elif historical is False:
+        urls = [live_url]
+    else:
+        urls = [live_url, hist_url]
+
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            payload = _get_json(url, params=params, session=session)
+        except requests.HTTPError as exc:
+            last_error = exc
+            response = exc.response
+            if response is not None and response.status_code == 404 and url != urls[-1]:
+                continue
+            raise
+        candles = payload.get("candlesticks", [])
+        if not isinstance(candles, list):
+            raise ValueError("Expected list under 'candlesticks'")
+        return [c for c in candles if isinstance(c, dict)]
+
+    if last_error is not None:
+        raise last_error
+    return []
 
 
 def save_json(data: Any, path: str | Path) -> Path:
