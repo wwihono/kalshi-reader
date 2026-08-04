@@ -98,4 +98,4 @@ seven-number summaries, categorical counts, calibration preview),
 
 ## Status
 
-Scaffold is **test-ready**: package layout, dependencies, collectors/cleaners/feature/model stubs with working core utilities, and a passing unit-test suite. Next steps are live data pulls, merge QA, full model runs, and report figures.
+EDA deliverable is in place: raw collectors (markets, schedule, pregame candlesticks), Kalshi/BR cleaning + join, summary/plot pipeline, `reports/eda.pdf`, and a passing unit-test suite. Next steps are full model training, conditioned accuracy, and simulated-return analysis.
