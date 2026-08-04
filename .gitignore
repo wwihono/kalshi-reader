@@ -54,3 +54,9 @@ reports/*.pdf
 !reports/eda.pdf
 !reports/figures/
 !reports/figures/**
+
+# Small shareable outputs are tracked for reproducibility
+!data/processed/kalshi_events.csv
+!data/processed/merged_games.csv
+!data/raw/kalshi/pregame_prices.json
+!data/raw/basketball_reference/nba_2026_schedule.csv
