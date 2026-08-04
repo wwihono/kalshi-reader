@@ -45,6 +45,11 @@ Tests cover the helpers called out in the work plan:
 - midpoint probability calculation
 - chronological 60/20/20 splitting
 - rolling feature construction (shifted windows / rest)
+- event-ticker parsing and market tidying (dates, teams, LA disambiguation)
+- tip-off time parsing (Eastern time, DST)
+- pregame candle selection (both live/historical candle schemas)
+- EDA summaries (missingness, seven-number, categorical) and the
+  Kalshi-to-results merge
 
 ```bash
 pytest
@@ -65,7 +70,23 @@ Download helpers:
 
 ```bash
 python scripts/collect_data.py --out-dir data/raw
+# then pull final pregame prices (one candlestick request per game):
+python scripts/collect_candles.py --raw-dir data/raw
 ```
+
+## EDA (Part 2)
+
+The EDA report is [`reports/eda.pdf`](reports/eda.pdf). Reproduce every
+number and figure in it with:
+
+```bash
+python scripts/run_eda.py
+```
+
+This writes `reports/eda_summary.txt` (dataset sizes, missingness,
+seven-number summaries, categorical counts, calibration preview),
+`reports/figures/*.png`, and the processed tables
+`data/processed/kalshi_events.csv` / `data/processed/merged_games.csv`.
 
 ## Method sketch
 

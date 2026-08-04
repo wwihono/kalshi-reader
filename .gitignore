@@ -47,6 +47,10 @@ data/processed/**
 *.log
 outputs/
 figures/
-reports/*.html
 reports/*.pdf
 !reports/.gitkeep
+
+# EDA deliverables are tracked
+!reports/eda.pdf
+!reports/figures/
+!reports/figures/**
