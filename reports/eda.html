@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Part 2 - Exploratory Data Analysis</title>
+<style>
+  @page {
+    size: letter;
+    margin: 0.75in 0.85in;
+    @bottom-center { content: counter(page); font-size: 10pt; color: #555; }
+  }
+  body {
+    font-family: "DejaVu Sans", "Helvetica", sans-serif;
+    font-size: 11pt;
+    line-height: 1.35;
+    color: #111;
+  }
+  p { margin: 5pt 0; }
+  h1 { font-size: 16pt; margin-bottom: 2pt; }
+  h2 { font-size: 13pt; margin: 11pt 0 4pt 0; border-bottom: 1px solid #999; padding-bottom: 1pt; }
+  h3 { font-size: 11.5pt; margin: 9pt 0 3pt 0; }
+  .subtitle { font-size: 12pt; color: #333; margin-top: 0; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #f3f3f3; padding: 0 2px; }
+  table { border-collapse: collapse; margin: 6pt 0; font-size: 9pt; }
+  th, td { border: 1px solid #bbb; padding: 2pt 5pt; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { background: #eee; }
+  .figrow { text-align: center; page-break-inside: avoid; margin: 6pt 0; }
+  .figrow figure { display: inline-block; width: 41%; vertical-align: top; margin: 0 0.5%; }
+  figure { margin: 7pt 0; text-align: center; page-break-inside: avoid; }
+  figure img { max-width: 100%; }
+  figcaption { font-size: 9pt; color: #333; margin-top: 3pt; text-align: left; }
+  .tablecap { font-size: 9pt; color: #333; margin: 2pt 0 6pt 0; }
+  ol, ul { margin: 4pt 0; padding-left: 20pt; }
+  ol li, ul li { margin-bottom: 2pt; }
+  .appendix h2 { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>Can Data Beat the Market? Predicting NBA Games and Evaluating Kalshi Odds</h1>
+<p class="subtitle">Part 2 &mdash; Exploratory Data Analysis</p>
+
+<h2>Title and Author(s)</h2>
+<p><b>Author:</b> Winston Wihono<br>
+<b>GitHub repository (public):</b>
+<a href="https://github.com/wwihono/kalshi-reader">https://github.com/wwihono/kalshi-reader</a><br>
+All source code for data collection, cleaning, EDA, figures, and tests lives in this
+repository. Every number and figure in this report is reproduced by running
+<code>python scripts/run_eda.py</code>.</p>
+
+<h2>Summary of Research Questions</h2>
+<ol>
+  <li><b>How accurately do Kalshi's pregame NBA prices represent the actual probability of
+  each team winning?</b> I compare Kalshi's market-implied probabilities shortly before each
+  game begins with the actual results, e.g. whether contracts priced near 60% win about 60%
+  of the time.</li>
+  <li><b>Can an NBA prediction model outperform Kalshi's market probabilities?</b> I will
+  build machine-learning models using only pregame information (recent win percentage,
+  point differential, home court, rest, team rating) and compare their accuracy, Brier
+  score, and log loss against Kalshi's pregame prices.</li>
+  <li><b>Under what conditions are Kalshi's NBA predictions most and least accurate?</b>
+  I will examine how accuracy changes with market volume, probability range, home-court
+  status, rest differences, and recent-form differences.</li>
+  <li><b>Would differences between the model and Kalshi's prices produce positive simulated
+  returns?</b> When the model's probability differs from Kalshi's price by at least 5%, 10%,
+  or 15%, I will simulate purchasing one contract and compute profit, loss, and ROI without
+  placing real trades.</li>
+</ol>
+
+<h2>Motivation</h2>
+<p>Prediction markets such as Kalshi let participants trade contracts on whether specific
+events will occur; in an NBA game market, the contract price can be read as the market's
+probability that a team wins. Those prices are shaped by traders, information flow,
+liquidity, and public opinion, and I am interested in whether statistical models can
+identify patterns the market does not fully price in. NBA games suit this question because
+teams play often and measurable pregame factors (recent form, home-court advantage, rest,
+point differential) exist for every game. The project does not assume a model can reliably
+profit; it evaluates whether prices are calibrated, when the market errs most, and whether
+apparent edges survive on games the model has never seen.</p>
+
+<h2>Dataset</h2>
+<h3>Kalshi NBA market data</h3>
+<p>The first dataset comes from Kalshi's public trade API (no authentication needed for
+market data). NBA game-winner markets belong to the <code>KXNBAGAME</code> series; recent
+markets come from <code>/trade-api/v2/markets</code> and archived markets from
+<code>/trade-api/v2/historical/markets</code>. Both endpoints are cursor-paginated, so my
+collector follows cursors until exhaustion and saves the raw JSON under
+<code>data/raw/kalshi/</code>. Key fields include <code>ticker</code>,
+<code>event_ticker</code>, <code>title</code>, the yes/no subtitles,
+<code>occurrence_datetime</code>, <code>settlement_value_dollars</code>,
+<code>result</code>, and <code>volume_fp</code>. For each game I additionally request
+one-minute candlestick price history and keep the last candle ending at least 15 minutes
+before the scheduled tip-off, so live-game information cannot leak into the pregame
+probability. A shareable copy of the derived data (<code>pregame_prices.json</code>,
+<code>kalshi_events.csv</code>, <code>merged_games.csv</code>) is committed to the
+repository.</p>
+<h3>NBA schedule and results data</h3>
+<p>Game results come from Basketball Reference's 2025&ndash;26 NBA schedule
+(<a href="https://www.basketball-reference.com/leagues/NBA_2026_games.html">basketball-reference.com/leagues/NBA_2026_games.html</a>).
+My collector programmatically visits each monthly schedule page and combines the tables.
+The schedule provides the date, start time (Eastern), visiting and home teams, and final
+scores. The two sources are matched on game date plus canonical home/visitor team names;
+team labels are normalized through a team-name dictionary because the sources use different
+naming formats.</p>
+
+<h2>Method</h2>
+<p>The EDA was implemented as Python modules under <code>src/kalshi_nba/</code> with two
+runnable scripts (<code>scripts/collect_data.py</code> / <code>scripts/collect_candles.py</code>
+for collection, <code>scripts/run_eda.py</code> for the analysis). The steps, including
+changes made during implementation, were:</p>
+<ol>
+  <li><b>Collect markets.</b> Paginated the recent and historical market endpoints,
+  yielding 2,898 unique markets across 1,449 events (games), saved as raw JSON.</li>
+  <li><b>Collect results.</b> Scraped the monthly Basketball Reference pages. During QA I
+  found the season landing page duplicates the first month's table, which produced 80
+  duplicated October rows; the collector now skips the landing page and drops exact
+  duplicate rows, leaving 1,322 games (2025-10-21 through the Finals on 2026-06-13).</li>
+  <li><b>Decode games from tickers (change from proposal).</b> I planned to identify games
+  from <code>occurrence_datetime</code> and the title/subtitle team labels, but 94.3% of
+  markets are missing <code>occurrence_datetime</code>, and subtitle labels are ambiguous
+  ("LA" vs. "Los Angeles" for the Clippers and Lakers). Instead I parse the event ticker
+  (e.g. <code>KXNBAGAME-26JAN05PHXHOU</code> &rarr; Jan 5, 2026, Phoenix at Houston), which
+  encodes the date and unambiguous 3-letter team codes.</li>
+  <li><b>Reconstruct tip-off times (new step).</b> Because scheduled start times are absent
+  from most market records, I parse Basketball Reference's "Start (ET)" strings (e.g.
+  "7:30p"), localize them to US Eastern time (handling daylight saving), and convert to UTC.
+  Kalshi's own <code>occurrence_datetime</code> is preferred when present.</li>
+  <li><b>Collect pregame prices.</b> For the market whose Yes side is the home team, I
+  request one-minute candles in the six hours before tip-off and keep the last candle ending
+  &ge; 15 minutes before tip. Archived markets require a separate
+  <code>/historical/markets/.../candlesticks</code> endpoint whose response schema differs
+  slightly (<code>close</code> vs. <code>close_dollars</code> keys), and the API rate-limits
+  aggressively, so the collector retries with exponential backoff. The pregame implied
+  probability is the midpoint of the yes bid and yes ask at that candle.</li>
+  <li><b>Merge and validate.</b> Kalshi events were inner-joined to Basketball Reference
+  results on (game date, home team, visitor team) with a one-to-one validation check;
+  1,316 of 1,322 season games matched, and the Kalshi settlement agreed with the Basketball
+  Reference winner in 100% of matched games.</li>
+  <li><b>Summarize and visualize.</b> <code>scripts/run_eda.py</code> computes the
+  missingness tables, seven-number summaries, and categorical counts below, and produces
+  Figures 1&ndash;6.</li>
+</ol>
+
+<h2>EDA Results</h2>
+
+<h3>Dataset 1: Kalshi NBA markets</h3>
+<p><b>Size and structure.</b> The tidied market table has <b>2,898 rows and 27 columns</b>.
+Each row is one market: one side of one game (one contract that pays $1 if a specific team
+wins), so each of the 1,449 events (games) has two rows. Columns describe identifiers
+(<code>ticker</code>, <code>event_ticker</code>, <code>title</code>), the team the Yes
+contract refers to, prices in dollars, activity (<code>volume_fp</code>,
+<code>open_interest_fp</code>), timestamps, and settlement (<code>result</code>,
+<code>settlement_value_dollars</code>). For the analysis I reduce this to one row per game
+by keeping the market whose Yes side is the home team (1,449 rows, the "event table").</p>
+<p><b>Missing data.</b> Checked with <code>DataFrame.isna().sum()</code>
+(<code>missingness_summary</code> in <code>src/kalshi_nba/eda.py</code>; full table in
+<code>reports/eda_summary.txt</code>). Three columns have missing values:</p>
+<ul>
+  <li><code>occurrence_datetime</code> is missing for <b>2,734 of 2,898 markets (94.3%)</b>
+  &mdash; only playoff-era records include it. Plan: decode the game date from the event
+  ticker and take tip-off times from Basketball Reference (Method step 4).</li>
+  <li><code>visitor_team</code> is missing for 2 rows (0.07%): the ticker code
+  <code>GUA</code> is the Guangzhou Loong Lions, a non-NBA preseason opponent. Plan: these
+  rows drop out of the season merge.</li>
+  <li>In the per-event table, the pregame probability is missing for <b>133 of 1,449 events
+  (9.2%)</b>: 86 events from the 2024&ndash;25 playoffs (before this season's dataset), 43
+  preseason exhibitions, and 4 postponed games &mdash; all outside the 2025&ndash;26 season
+  scope, so the inner join removes them. Every merged season game has a pregame price.</li>
+</ul>
+<p><b>Variables of interest.</b> <code>kalshi_home_prob</code> (final pregame bid/ask
+midpoint for the home team) is the market probability evaluated in RQ1, the benchmark for
+the models in RQ2, and the purchase price in RQ4. <code>volume_fp</code> (contracts traded)
+is the liquidity condition in RQ3. <code>result</code> /
+<code>settlement_value_dollars</code> determine the market's settled winner, used to verify
+outcomes. <code>game_date</code>, <code>home_team</code>, and <code>visitor_team</code>
+(decoded from tickers) are the join keys to the results data.</p>
+
+<table>
+  <tr><th>variable</th><th>mean</th><th>std</th><th>min</th><th>q1</th><th>median</th><th>q3</th><th>max</th></tr>
+  <tr><td>kalshi_home_prob</td><td>0.552</td><td>0.242</td><td>0.005</td><td>0.375</td><td>0.565</td><td>0.745</td><td>0.995</td></tr>
+  <tr><td>volume_fp (contracts)</td><td>3,704,940</td><td>5,386,319</td><td>33,946</td><td>1,294,812</td><td>2,474,414</td><td>4,263,675</td><td>111,797,600</td></tr>
+  <tr><td>settlement_value_dollars</td><td>0.555</td><td>0.497</td><td>0.000</td><td>0.000</td><td>1.000</td><td>1.000</td><td>1.000</td></tr>
+</table>
+<p class="tablecap">Table 1. Seven-number summaries for the quantitative Kalshi variables of
+interest (per-event table, home side).</p>
+
+<table>
+  <tr><th>result</th><th>count</th></tr>
+  <tr><td>yes (home team won)</td><td>802</td></tr>
+  <tr><td>no (home team lost)</td><td>644</td></tr>
+  <tr><td>scalar (voided/postponed, cash-settled)</td><td>3</td></tr>
+</table>
+<p class="tablecap">Table 2. Categorical summary of <code>result</code> for the 1,449
+home-side markets. The companion variable <code>status</code> takes the single value
+<code>finalized</code> (1,449), confirming every collected market is settled.</p>
+
+<div class="figrow">
+<figure>
+  <img src="figures/fig1_kalshi_prob_hist.png" alt="Histogram of Kalshi pregame home-win probabilities">
+  <figcaption><b>Figure 1.</b> Kalshi's pregame home-win probabilities cover the full 0&ndash;1
+  range but sit more often above 50%, reflecting home-court advantage.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig2_kalshi_volume_hist.png" alt="Histogram of Kalshi market volume, log scale">
+  <figcaption><b>Figure 2.</b> Per-market contract volume is heavily right-skewed, spanning
+  roughly four orders of magnitude around a median of about 2.5 million contracts.</figcaption>
+</figure>
+</div>
+<p>Figure 1 is a histogram of <code>kalshi_home_prob</code>, produced with matplotlib from
+the per-event table. I chose a histogram because the variable is a continuous probability
+and its shape matters for later analysis: the market must be tested across the whole range,
+not just near 50/50. The distribution leans right of the dashed 50% line (median 0.565),
+consistent with the home team being the favorite slightly more often than not, and both
+tails are populated, so calibration can be evaluated for heavy favorites and heavy
+underdogs alike.</p>
+<p>Figure 2 shows <code>volume_fp</code> on a logarithmic x-axis. A log scale is necessary
+because volume spans from ~34 thousand to ~112 million contracts; on a linear axis nearly
+every market would collapse into one bar. The takeaway is that liquidity is roughly
+log-normal with a long right tail (high-profile playoff games), which supports RQ3's plan to
+compare market accuracy between low- and high-volume quartiles rather than treating volume
+linearly.</p>
+
+<h3>Dataset 2: Basketball Reference 2025&ndash;26 schedule and results</h3>
+<p><b>Size and structure.</b> After cleaning, the schedule table has <b>1,322 rows and 6
+columns</b>. Each row is one completed NBA game from 2025-10-21 to 2026-06-13 (regular
+season, NBA Cup, play-in, and playoffs). Columns are <code>game_date</code>,
+<code>start_et</code> (scheduled start, Eastern), <code>visitor_team</code>,
+<code>home_team</code>, <code>visitor_pts</code>, <code>home_pts</code>.</p>
+<p><b>Missing data.</b> The cleaned dataset has <b>no missing values</b>: I verified this in
+Python with <code>schedule.isna().sum()</code>, which returns 0 for every column, and
+<code>schedule.duplicated().sum()</code>, which returns 0 (both are written into
+<code>reports/eda_summary.txt</code> by <code>scripts/run_eda.py</code>). This is expected
+because the season is complete, so every scheduled game has a final score. Two raw-data
+issues were removed on the way to this clean table: repeated header rows embedded in the
+HTML tables, and 80 duplicated October rows caused by the landing page repeating the first
+month's table (Method step 2).</p>
+<p><b>Variables of interest.</b> <code>home_pts</code> and <code>visitor_pts</code> define
+the game outcome; their difference (<code>home_margin</code>) and the derived binary
+<code>home_win</code> are the ground truth for RQ1's calibration and the target variable for
+RQ2's models. <code>game_date</code> orders games for the leakage-free chronological split
+and rolling-form features; <code>home_team</code>/<code>visitor_team</code> are join keys
+and the basis of per-team features; <code>start_et</code> supplies the tip-off time that
+anchors the "final price &ge; 15 minutes before tip" rule.</p>
+
+<table>
+  <tr><th>variable</th><th>mean</th><th>std</th><th>min</th><th>q1</th><th>median</th><th>q3</th><th>max</th></tr>
+  <tr><td>home_pts</td><td>115.99</td><td>12.98</td><td>77</td><td>107</td><td>116</td><td>125</td><td>157</td></tr>
+  <tr><td>visitor_pts</td><td>114.21</td><td>12.96</td><td>66</td><td>105</td><td>114</td><td>123</td><td>157</td></tr>
+  <tr><td>home_margin</td><td>1.78</td><td>16.47</td><td>-55</td><td>-9</td><td>3</td><td>13</td><td>54</td></tr>
+</table>
+<p class="tablecap">Table 3. Seven-number summaries for the quantitative schedule variables
+of interest.</p>
+
+<div class="figrow">
+<figure>
+  <img src="figures/fig3_br_margin_hist.png" alt="Histogram of home winning margins">
+  <figcaption><b>Figure 3.</b> Home winning margins are roughly bell-shaped but shifted about
+  two points in the home team's favor, and games are never decided by zero points.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig4_br_monthly_games.png" alt="Games per month with monthly home win rate">
+  <figcaption><b>Figure 4.</b> Games per month drop sharply from April onward as the playoffs
+  begin, and the monthly home-win rate hovers near 55&ndash;60% before turning noisy in the
+  tiny June sample.</figcaption>
+</figure>
+</div>
+<table>
+  <tr><th>home_win</th><th>count</th></tr>
+  <tr><td>1 (home team won)</td><td>734</td></tr>
+  <tr><td>0 (home team lost)</td><td>588</td></tr>
+</table>
+<p class="tablecap">Table 4. Categorical summary of the derived target
+<code>home_win</code>; the home team won 55.5% of games. The other categorical variables,
+<code>home_team</code> and <code>visitor_team</code>, take the 30 NBA team names; the full
+count of games hosted per team (41&ndash;52, varying with playoff runs) is in Appendix
+Table A1.</p>
+<p>Figure 3 is a histogram of <code>home_margin</code> with a reference line at zero. A
+histogram makes both the home-court shift and the spread visible at once. Readers should
+take away that home advantage is real but small (mean +1.8 points, home wins 55.5% of
+games) relative to the game-to-game spread (std 16.5 points, extremes of -55 and +54),
+which is exactly why probabilistic evaluation, rather than picking winners, is the right
+lens for RQ1 and RQ2.</p>
+<p>Figure 4 combines a bar chart of games per month with a line for the monthly home-win
+rate (legend distinguishes the two axes). I chose this plot to expose the time structure
+that the chronological 60/20/20 split will inherit: the test set will be dominated by
+late-season and playoff games, which are fewer in number and different in character
+(February also dips due to the All-Star break). The home-win rate line stays in a narrow
+band around 0.55 during the regular season, so the target variable is reasonably balanced
+across time; the June value (0.20) rests on only 5 Finals games and is sampling noise, not
+a trend.</p>
+
+<h3>Merged dataset (Kalshi &times; Basketball Reference)</h3>
+<p>The merged per-game table &mdash; the basis for all four research questions &mdash; has
+<b>1,316 rows and 23 columns</b> (each row one 2025&ndash;26 game with market data attached).
+1,316 of 1,322 season games matched (99.5%); the 6 unmatched games are postponements, where
+Kalshi's event ticker keeps the originally scheduled date (3 of these markets were voided
+and cash-settled, the <code>scalar</code> results in Table 2). No merged column has missing
+values except <code>occurrence_datetime</code> (93.8%, expected as above); in particular,
+<b>100% of merged games have a pregame probability</b>. As a cross-source validity check,
+the Kalshi settlement winner agrees with the Basketball Reference score winner in
+<b>100.00%</b> of the 1,316 games. A preview of RQ1 using this table: binning
+<code>kalshi_home_prob</code> into 10% bins, the average bin probability and the empirical
+home-win rate differ by at most 5.1 percentage points in any bin (see
+<code>reports/eda_summary.txt</code>), which Figures 5 and 6 visualize.</p>
+
+<figure>
+  <img src="figures/fig5_calibration_preview.png" alt="Calibration plot of Kalshi probabilities" style="max-width: 2.7in;">
+  <figcaption><b>Figure 5.</b> Binned Kalshi pregame probabilities track empirical home-win
+  rates closely along the diagonal, so the market looks well calibrated at first pass
+  (marker size = games per bin).</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig6_prob_vs_margin.png" alt="Scatter of market probability vs realized margin" style="max-width: 3.9in;">
+  <figcaption><b>Figure 6.</b> Realized home margins rise with the market's pregame
+  probability, but big upsets occur across the entire probability range.</figcaption>
+</figure>
+<p>Figure 5 plots the mean market probability per 10%-wide bin against the fraction of
+those games the home team actually won; the dashed diagonal is perfect calibration. This is
+the standard calibration visualization and directly previews RQ1. Deviations are small and
+unsystematic (largest gaps: the 0.6&ndash;0.7 bin under-prices home teams by ~5 points and
+the 0.8&ndash;0.9 bin over-prices them by ~5 points), which sets a high bar for the RQ2
+models &mdash; beating a well-calibrated market is hard.</p>
+<p>Figure 6 scatters <code>kalshi_home_prob</code> against <code>home_margin</code>, colored
+by outcome. A scatter plot shows individual games rather than bin averages, complementing
+Figure 5: it reveals that even games priced at 80&ndash;90% for the home team sometimes end
+in double-digit home losses (upper-left/lower-right quadrants are far from empty). This is
+the variance that RQ4's simulated trading must survive, and it motivates conditioning
+accuracy on game characteristics in RQ3.</p>
+
+<h2>Challenge Goals Update</h2>
+<p><b>Messy Data (unchanged, confirmed).</b> The EDA validated this goal and it turned out
+messier than proposed: beyond paginated APIs and HTML scraping, I had to (a) decode dates
+and teams from ticker strings because <code>occurrence_datetime</code> is 94.3% missing and
+subtitle labels are ambiguous, (b) reconstruct tip-off timestamps from a second source with
+time-zone/DST handling, (c) use two different candlestick endpoints whose response schemas
+differ, with exponential backoff for rate limiting, (d) de-duplicate a scraped table that
+appeared twice, and (e) reconcile postponed games settled as <code>scalar</code>. All of
+this is handled in tested Python functions.</p>
+<p><b>Machine Learning (unchanged).</b> The plan is still to train and tune logistic
+regression, random forest, and gradient boosting on pregame features with a chronological
+60/20/20 split, selecting on validation and evaluating once on the test period against
+Kalshi. The feature modules (rolling form, rest, Elo) and the split/metrics helpers are
+implemented and unit-tested; the EDA confirms the merged table gives 1,316 labeled games
+with complete features inputs, enough for the planned splits (~790 train / ~263 validation /
+~263 test).</p>
+
+<h2>Work Plan Evaluation</h2>
+<p>My proposal estimated: (1) download and inspect, 3h; (2) clean and merge, 5h; (3)
+features, 5h; (4) models, 6h; (5) visualization and report, 5h. Estimate (1) was close: the
+endpoints behaved as documented. Estimate (2) was too low &mdash; roughly 8 hours in
+practice &mdash; because I did not anticipate the missing <code>occurrence_datetime</code>
+field, the ambiguous team labels, the separate historical candlestick endpoint with a
+different schema, API rate limiting, or the duplicated October table; each required
+investigation, a code change, and tests. The candlestick collection also takes ~15 minutes
+of wall-clock time per full run due to rate limits, which I had not budgeted. Estimate (5)
+is tracking well for the EDA portion (~4 hours). Tasks (3) and (4) remain: the feature and
+split code is written and unit-tested, so I estimate ~2 hours to run and QA features on the
+merged table, ~6 hours for model training/tuning/evaluation, and ~4 hours for the final
+analysis (calibration, conditions, simulated returns) and report &mdash; about 12 hours
+remaining.</p>
+
+<h2>Testing</h2>
+<p>All EDA code is covered by a pytest suite (60 tests, all passing; run with
+<code>pytest</code>), and the codebase passes <code>flake8</code>. I tested with small,
+hand-built inputs whose correct outputs I can verify by hand, because that isolates each
+transformation and makes failures obvious:</p>
+<ul>
+  <li><b>Ticker decoding</b> (<code>tests/test_markets_clean.py</code>): event tickers parse
+  to the right date and teams; garbage tickers raise errors; duplicate markets de-duplicate;
+  string prices convert to floats; the ambiguous "LA"/"Los Angeles" labels resolve to
+  Clippers vs. Lakers via ticker codes; non-NBA opponents map to missing.</li>
+  <li><b>Tip-off times</b> (<code>tests/test_tipoff.py</code>): "7:30p"-style strings parse
+  correctly including noon/midnight rules, invalid strings raise, and Eastern-to-UTC
+  conversion is verified for both standard time (January) and daylight saving (April).</li>
+  <li><b>Pregame price selection</b> (<code>tests/test_pregame_candles.py</code>): the last
+  candle at or before the 15-minutes-before-tip cutoff is selected even when candles are
+  unordered; candles after the cutoff are ignored; both the live (<code>close_dollars</code>)
+  and historical (<code>close</code>) schemas parse; empty inputs return None.</li>
+  <li><b>Summary helpers</b> (<code>tests/test_eda.py</code>): missingness counts and
+  percentages, seven-number summaries, and categorical counts are asserted against values
+  computed by hand (e.g. std of [1..5] with ddof=1); the event table keeps only home-side
+  markets; the merge is inner and one-to-one, and duplicate games raise a
+  <code>MergeError</code> via pandas' <code>validate="one_to_one"</code>.</li>
+  <li><b>Schedule cleaning</b> (<code>tests/test_schedule_clean.py</code>): embedded header
+  rows and duplicated rows are dropped; dates and points convert to proper types.</li>
+</ul>
+<p>Beyond unit tests, I validated the pipeline output itself: the two sources were collected
+independently, yet the Kalshi settlement winner matches the Basketball Reference winner in
+100.00% of the 1,316 merged games &mdash; a strong end-to-end check that the date decoding,
+team mapping, and join are correct. The calibration preview (Figure 5) provides a final
+plausibility check: probabilities and outcomes line up along the diagonal, which would not
+happen if sides or games were mismatched.</p>
+
+<h2>Collaboration</h2>
+<p>I worked individually and did not consult other people outside the course staff. Resources
+consulted: the Kalshi API documentation (market, historical, and candlestick endpoints),
+Basketball Reference (schedule pages and abbreviation conventions), and the pandas,
+matplotlib, and pytest documentation. I used Cursor (an AI coding assistant) to help
+implement and test the data-collection and EDA code; all analysis decisions, data sources,
+and the research design are my own from the proposal.</p>
+
+<div class="appendix">
+<h2>Appendix</h2>
+<p class="tablecap"><b>Table A1.</b> Games hosted per team (categorical summary of
+<code>home_team</code>), 2025&ndash;26 season including play-in and playoffs.</p>
+<table>
+  <tr><th>home_team</th><th>games hosted</th><th>home_team</th><th>games hosted</th></tr>
+  <tr><td>San Antonio Spurs</td><td>52</td><td>Portland Trail Blazers</td><td>43</td></tr>
+  <tr><td>Oklahoma City Thunder</td><td>50</td><td>Charlotte Hornets</td><td>42</td></tr>
+  <tr><td>New York Knicks</td><td>50</td><td>Los Angeles Clippers</td><td>42</td></tr>
+  <tr><td>Cleveland Cavaliers</td><td>50</td><td>Chicago Bulls</td><td>41</td></tr>
+  <tr><td>Detroit Pistons</td><td>49</td><td>Memphis Grizzlies</td><td>41</td></tr>
+  <tr><td>Philadelphia 76ers</td><td>47</td><td>Milwaukee Bucks</td><td>41</td></tr>
+  <tr><td>Minnesota Timberwolves</td><td>47</td><td>Utah Jazz</td><td>41</td></tr>
+  <tr><td>Los Angeles Lakers</td><td>46</td><td>Dallas Mavericks</td><td>41</td></tr>
+  <tr><td>Orlando Magic</td><td>46</td><td>Indiana Pacers</td><td>41</td></tr>
+  <tr><td>Boston Celtics</td><td>45</td><td>Golden State Warriors</td><td>41</td></tr>
+  <tr><td>Phoenix Suns</td><td>45</td><td>Brooklyn Nets</td><td>41</td></tr>
+  <tr><td>Atlanta Hawks</td><td>44</td><td>New Orleans Pelicans</td><td>41</td></tr>
+  <tr><td>Toronto Raptors</td><td>44</td><td>Sacramento Kings</td><td>41</td></tr>
+  <tr><td>Houston Rockets</td><td>44</td><td>Washington Wizards</td><td>41</td></tr>
+  <tr><td>Denver Nuggets</td><td>44</td><td>Miami Heat</td><td>41</td></tr>
+</table>
+<p class="tablecap"><b>Note A2.</b> Kalshi seven-number summaries restricted to the merged
+table differ slightly from Table 1 (e.g. volume mean 3,956,639; min 108,751) because the
+merge removes previous-season playoff, preseason, and postponed events. The full
+machine-generated summary, including the 10-bin calibration table, is committed at
+<code>reports/eda_summary.txt</code>.</p>
+</div>
+
+</body>
+</html>
