@@ -52,6 +52,59 @@ def add_midpoint_probability(
     return out
 
 
+def candle_close_values(candle: dict) -> dict[str, float | None]:
+    """Extract close-of-candle bid/ask/price from a Kalshi candlestick.
+
+    Handles both schemas returned by the public API: the live endpoint
+    uses ``close_dollars`` keys while the historical endpoint uses
+    ``close``. Missing sides come back as None.
+    """
+
+    def _close(section: object) -> float | None:
+        if not isinstance(section, dict):
+            return None
+        raw = section.get("close_dollars", section.get("close"))
+        if raw is None:
+            return None
+        return float(raw)
+
+    return {
+        "yes_bid": _close(candle.get("yes_bid")),
+        "yes_ask": _close(candle.get("yes_ask")),
+        "price": _close(candle.get("price")),
+    }
+
+
+def pregame_price_from_candles(
+    candles: Iterable[dict],
+    cutoff_ts: int,
+) -> dict[str, float | None] | None:
+    """Select the last candle at or before ``cutoff_ts`` and summarize it.
+
+    Returns a dict with end_period_ts, yes_bid, yes_ask, price, and the
+    bid/ask midpoint probability, or None when no candle qualifies.
+    """
+    best: dict | None = None
+    for candle in candles:
+        ts = candle.get("end_period_ts")
+        if ts is None or ts > cutoff_ts:
+            continue
+        if best is None or ts > best["end_period_ts"]:
+            best = candle
+    if best is None:
+        return None
+
+    values = candle_close_values(best)
+    midpoint = midpoint_probability(values["yes_bid"], values["yes_ask"])
+    return {
+        "end_period_ts": int(best["end_period_ts"]),
+        "yes_bid": values["yes_bid"],
+        "yes_ask": values["yes_ask"],
+        "price": values["price"],
+        "midpoint": midpoint,
+    }
+
+
 def brier_score(y_true: Iterable[float], y_prob: Iterable[float]) -> float:
     """Mean squared error between outcomes and predicted probabilities."""
     yt = np.asarray(list(y_true), dtype=float)

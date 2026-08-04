@@ -102,13 +102,47 @@ def fetch_historical_markets(
 def fetch_candlesticks(
     ticker: str,
     *,
+    series_ticker: str = SERIES_TICKER,
     start_ts: int | None = None,
     end_ts: int | None = None,
     period_interval: int = 1,
     session: requests.Session | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch one-minute (default) candlesticks for a market ticker."""
-    url = f"{BASE_URL}/markets/{ticker}/candlesticks"
+    """Fetch one-minute (default) candlesticks for a market ticker.
+
+    Uses the series-scoped endpoint; the bare ``/markets/{ticker}/candlesticks``
+    path returns 404 on the public API.
+    """
+    url = f"{BASE_URL}/series/{series_ticker}/markets/{ticker}/candlesticks"
+    params: dict[str, Any] = {"period_interval": period_interval}
+    if start_ts is not None:
+        params["start_ts"] = start_ts
+    if end_ts is not None:
+        params["end_ts"] = end_ts
+
+    payload = _get_json(url, params=params, session=session)
+    candles = payload.get("candlesticks", [])
+    if not isinstance(candles, list):
+        raise ValueError("Expected list under 'candlesticks'")
+    return [c for c in candles if isinstance(c, dict)]
+
+
+def fetch_historical_candlesticks(
+    ticker: str,
+    *,
+    start_ts: int | None = None,
+    end_ts: int | None = None,
+    period_interval: int = 1,
+    session: requests.Session | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch candlesticks for an archived market.
+
+    Markets settled before the historical cutoff 404 on the live series
+    endpoint and must be read from ``/historical/markets/.../candlesticks``.
+    Note the response schema differs slightly (``close`` vs
+    ``close_dollars`` keys).
+    """
+    url = f"{BASE_URL}/historical/markets/{ticker}/candlesticks"
     params: dict[str, Any] = {"period_interval": period_interval}
     if start_ts is not None:
         params["start_ts"] = start_ts
